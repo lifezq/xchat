@@ -18,7 +18,7 @@ class LocalStorageService {
 
     return await openDatabase(
       path,
-      version: 1,
+      version: 3,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE messages (
@@ -29,14 +29,18 @@ class LocalStorageService {
             type TEXT NOT NULL,
             timestamp TEXT NOT NULL,
             isRead INTEGER NOT NULL,
-            voiceUrl TEXT
+            voiceUrl TEXT,
+            status TEXT NOT NULL DEFAULT 'sent',
+            deliveredAt TEXT,
+            readAt TEXT
           )
         ''');
 
         await db.execute('''
           CREATE TABLE users (
             id INTEGER PRIMARY KEY,
-            email TEXT NOT NULL,
+            phone TEXT NOT NULL,
+            phoneMasked TEXT,
             nickname TEXT NOT NULL,
             avatar TEXT,
             createdAt TEXT NOT NULL
@@ -46,6 +50,26 @@ class LocalStorageService {
         await db.execute('''
           CREATE INDEX idx_messages_users ON messages(senderId, receiverId)
         ''');
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute("ALTER TABLE messages ADD COLUMN status TEXT NOT NULL DEFAULT 'sent'");
+          await db.execute("ALTER TABLE messages ADD COLUMN deliveredAt TEXT");
+          await db.execute("ALTER TABLE messages ADD COLUMN readAt TEXT");
+        }
+        if (oldVersion < 3) {
+          await db.execute("DROP TABLE IF EXISTS users");
+          await db.execute('''
+            CREATE TABLE users (
+              id INTEGER PRIMARY KEY,
+              phone TEXT NOT NULL,
+              phoneMasked TEXT,
+              nickname TEXT NOT NULL,
+              avatar TEXT,
+              createdAt TEXT NOT NULL
+            )
+          ''');
+        }
       },
     );
   }
@@ -63,6 +87,10 @@ class LocalStorageService {
         'type': message.type.toString().split('.').last,
         'timestamp': message.timestamp.toIso8601String(),
         'isRead': message.isRead ? 1 : 0,
+        'voiceUrl': message.voiceUrl,
+        'status': message.status.toString().split('.').last,
+        'deliveredAt': message.deliveredAt?.toIso8601String(),
+        'readAt': message.readAt?.toIso8601String(),
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"chat-backend/models"
+	"chat-backend/pkg/phoneutil"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -16,14 +17,20 @@ func NewUserHandler(db *gorm.DB) *UserHandler {
 }
 
 func (h *UserHandler) SearchUsers(c *gin.Context) {
-	email := c.Query("email")
-	if email == "" {
-		writeBadRequest(c, "邮箱参数必填")
+	phone := c.Query("phone")
+	if phone == "" {
+		writeFailure(c, 400, "PHONE_INVALID", "手机号格式不正确")
+		return
+	}
+
+	normalizedPhone, err := phoneutil.Normalize(phone)
+	if err != nil {
+		writeFailure(c, 400, "PHONE_INVALID", "手机号格式不正确")
 		return
 	}
 
 	var user models.User
-	if err := h.db.Where("email = ?", email).First(&user).Error; err != nil {
+	if err := h.db.Where("phone = ?", normalizedPhone).First(&user).Error; err != nil {
 		writeNotFound(c, "用户不存在")
 		return
 	}

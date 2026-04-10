@@ -33,12 +33,12 @@ flutter pub get
 
 编辑 `lib/services/api_service.dart`：
 ```dart
-static const String baseUrl = 'http://localhost:8090/api';
+static const String baseUrl = 'http://172.16.20.95:8090/api';
 ```
 
 编辑 `lib/services/websocket_service.dart`：
 ```dart
-static const String wsUrl = 'ws://localhost:8090/api/ws';
+static const String wsUrl = 'ws://172.16.20.95:8090/api/ws';
 ```
 
 如果使用真机测试，将 `localhost` 改为你的电脑 IP 地址。

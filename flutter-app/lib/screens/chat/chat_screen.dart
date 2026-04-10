@@ -266,9 +266,21 @@ class _MessageBubble extends StatelessWidget {
                       ),
                     ),
                 const SizedBox(height: 4),
-                Text(
-                  DateFormat('HH:mm').format(message.timestamp),
-                  style: const TextStyle(fontSize: 11, color: Colors.grey),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      DateFormat('HH:mm').format(message.timestamp),
+                      style: const TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                    if (isMe) ...[
+                      const SizedBox(width: 6),
+                      Text(
+                        _statusText(message.status),
+                        style: const TextStyle(fontSize: 11, color: Colors.grey),
+                      ),
+                    ],
+                  ],
                 ),
               ],
             ),
@@ -280,5 +292,16 @@ class _MessageBubble extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  String _statusText(MessageStatus status) {
+    switch (status) {
+      case MessageStatus.sent:
+        return '已发送';
+      case MessageStatus.delivered:
+        return '已送达';
+      case MessageStatus.read:
+        return '已读';
+    }
   }
 }

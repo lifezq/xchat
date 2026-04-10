@@ -1,11 +1,12 @@
 package services
 
 import (
+	"chat-backend/models"
 	"chat-backend/pkg/apperrors"
+	"chat-backend/pkg/phoneutil"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"chat-backend/models"
 	"errors"
 	"fmt"
 	"strconv"
@@ -32,33 +33,53 @@ func NewAuthService(db *gorm.DB, jwtSecret string, jwtExpiration time.Duration) 
 	}
 }
 
-func (s *AuthService) Register(email, password, nickname string) (*models.User, error) {
+func (s *AuthService) Register(phone, password, nickname string) (string, string, *models.User, error) {
+	normalizedPhone, err := phoneutil.Normalize(phone)
+	if err != nil {
+		return "", "", nil, apperrors.ErrPhoneInvalid
+	}
+
 	var existingUser models.User
-	if err := s.db.Where("email = ?", email).First(&existingUser).Error; err == nil {
-		return nil, apperrors.ErrEmailExists
+	if err := s.db.Where("phone = ?", normalizedPhone).First(&existingUser).Error; err == nil {
+		return "", "", nil, apperrors.ErrPhoneExists
 	}
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		return nil, err
+		return "", "", nil, err
 	}
 
 	user := &models.User{
-		Email:    email,
+		Phone:    normalizedPhone,
 		Password: string(hashedPassword),
 		Nickname: nickname,
 	}
 
 	if err := s.db.Create(user).Error; err != nil {
-		return nil, err
+		return "", "", nil, err
 	}
 
-	return user, nil
+	accessToken, err := s.generateAccessToken(user.ID)
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	refreshToken, err := s.createSession(user.ID)
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	return accessToken, refreshToken, user, nil
 }
 
-func (s *AuthService) Login(email, password string) (string, string, *models.User, error) {
+func (s *AuthService) Login(phone, password string) (string, string, *models.User, error) {
+	normalizedPhone, err := phoneutil.Normalize(phone)
+	if err != nil {
+		return "", "", nil, apperrors.ErrPhoneInvalid
+	}
+
 	var user models.User
-	if err := s.db.Where("email = ?", email).First(&user).Error; err != nil {
+	if err := s.db.Where("phone = ?", normalizedPhone).First(&user).Error; err != nil {
 		return "", "", nil, apperrors.ErrInvalidCredentials
 	}
 

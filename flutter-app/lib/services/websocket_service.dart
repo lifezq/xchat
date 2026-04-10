@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/message.dart';
 import 'api_service.dart';
@@ -16,7 +17,7 @@ enum WsConnectionStatus {
 class WebSocketService {
   static const String wsUrl = String.fromEnvironment(
     'WS_URL',
-    defaultValue: 'ws://localhost:8090/api/ws',
+    defaultValue: 'ws://172.16.20.95:8090/api/ws',
   );
 
   final ApiService _apiService;
@@ -66,9 +67,16 @@ class WebSocketService {
 
       _subscription?.cancel();
       _channel?.sink.close();
-      _channel = WebSocketChannel.connect(
-        Uri.parse('$wsUrl?token=$token'),
-      );
+      final uri = Uri.parse('$wsUrl?token=$token');
+      // 移动端优先走 Authorization 头，query token 作为兜底，提升与后端鉴权兼容性。
+      if (kIsWeb) {
+        _channel = WebSocketChannel.connect(uri);
+      } else {
+        _channel = IOWebSocketChannel.connect(
+          uri,
+          headers: {'Authorization': 'Bearer $token'},
+        );
+      }
 
       _subscription = _channel!.stream.listen(
         (data) {

@@ -9,7 +9,7 @@ import (
 // User 用户表
 type User struct {
 	ID        uint           `gorm:"primarykey" json:"id"`
-	Email     string         `gorm:"unique;size:100;not null" json:"email"`
+	Phone     string         `gorm:"size:20;not null;unique" json:"phone"`
 	Password  string         `gorm:"size:255;not null" json:"-"`
 	Nickname  string         `gorm:"size:50;not null" json:"nickname"`
 	Avatar    string         `gorm:"size:255" json:"avatar"`
@@ -28,7 +28,7 @@ func (User) TableName() string {
 type AuthSession struct {
 	ID               uint       `gorm:"primarykey" json:"id"`
 	UserID           uint       `gorm:"not null;index:idx_auth_sessions_user_id" json:"userId"`
-	RefreshTokenHash string     `gorm:"size:64;not null;uniqueIndex:idx_auth_sessions_refresh_hash" json:"-"`
+	RefreshTokenHash string     `gorm:"size:64;not null;unique" json:"-"`
 	DeviceID         string     `gorm:"size:100" json:"deviceId"`
 	UserAgent        string     `gorm:"size:255" json:"userAgent"`
 	IP               string     `gorm:"size:64" json:"ip"`
@@ -47,15 +47,18 @@ func (AuthSession) TableName() string {
 
 // Message 消息表
 type Message struct {
-	ID         uint      `gorm:"primarykey" json:"id"`
-	SenderID   uint      `gorm:"not null;index:idx_sender_receiver" json:"senderId"`
-	ReceiverID uint      `gorm:"not null;index:idx_sender_receiver" json:"receiverId"`
-	Content    string    `gorm:"type:text;not null" json:"content"`
-	Type       string    `gorm:"size:20;not null;default:'text'" json:"type"` // text, voice, image, file
-	VoiceURL   string    `gorm:"size:255" json:"voiceUrl,omitempty"`
-	Duration   int       `gorm:"default:0" json:"duration,omitempty"` // 语音时长（秒）
-	IsRead     bool      `gorm:"default:false;index:idx_messages_is_read" json:"isRead"`
-	CreatedAt  time.Time `gorm:"index:idx_messages_created_at" json:"timestamp"`
+	ID          uint       `gorm:"primarykey" json:"id"`
+	SenderID    uint       `gorm:"not null;index:idx_sender_receiver" json:"senderId"`
+	ReceiverID  uint       `gorm:"not null;index:idx_sender_receiver" json:"receiverId"`
+	Content     string     `gorm:"type:text;not null" json:"content"`
+	Type        string     `gorm:"size:20;not null;default:'text'" json:"type"` // text, voice, image, file
+	VoiceURL    string     `gorm:"size:255" json:"voiceUrl,omitempty"`
+	Duration    int        `gorm:"default:0" json:"duration,omitempty"` // 语音时长（秒）
+	IsRead      bool       `gorm:"default:false;index:idx_messages_is_read" json:"isRead"`
+	Status      string     `gorm:"size:20;not null;default:'sent';index:idx_messages_status" json:"status"` // sent, delivered, read
+	DeliveredAt *time.Time `json:"deliveredAt,omitempty"`
+	ReadAt      *time.Time `json:"readAt,omitempty"`
+	CreatedAt   time.Time  `gorm:"index:idx_messages_created_at" json:"timestamp"`
 
 	Sender   User `gorm:"foreignKey:SenderID;constraint:OnDelete:CASCADE" json:"-"`
 	Receiver User `gorm:"foreignKey:ReceiverID;constraint:OnDelete:CASCADE" json:"-"`

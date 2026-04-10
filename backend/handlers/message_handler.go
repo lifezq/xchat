@@ -3,16 +3,21 @@ package handlers
 import (
 	"chat-backend/services"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
 type MessageHandler struct {
 	chatService *services.ChatService
+	hub         *services.WebSocketHub
 }
 
-func NewMessageHandler(chatService *services.ChatService) *MessageHandler {
-	return &MessageHandler{chatService: chatService}
+func NewMessageHandler(chatService *services.ChatService, hub *services.WebSocketHub) *MessageHandler {
+	return &MessageHandler{
+		chatService: chatService,
+		hub:         hub,
+	}
 }
 
 type SendMessageRequest struct {
@@ -35,6 +40,19 @@ func (h *MessageHandler) SendMessage(c *gin.Context) {
 	if err != nil {
 		writeInternalError(c, "发送消息失败")
 		return
+	}
+
+	// 接收方在线时实时推送；不在线则仅落库，待其上线后通过拉取历史消息获取。
+	delivered, pushErr := h.hub.SendToUser(req.ReceiverID, message)
+	if pushErr != nil {
+		writeInternalError(c, "发送消息失败")
+		return
+	}
+	if delivered {
+		_ = h.chatService.MarkAsDelivered(message.ID)
+		message.Status = "delivered"
+		now := time.Now()
+		message.DeliveredAt = &now
 	}
 
 	writeSuccess(c, 201, "发送消息成功", gin.H{"message": message})

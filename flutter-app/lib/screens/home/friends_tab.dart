@@ -39,7 +39,7 @@ class FriendsTab extends StatelessWidget {
                   child: Text(friend.nickname[0].toUpperCase()),
                 ),
                 title: Text(friend.nickname),
-                subtitle: Text(friend.email),
+                subtitle: Text(friend.phoneMasked ?? friend.phone),
                 onTap: () {
                   Navigator.of(context).push(
                     MaterialPageRoute(
@@ -68,10 +68,10 @@ class FriendsTab extends StatelessWidget {
         content: TextField(
           controller: controller,
           decoration: const InputDecoration(
-            labelText: '输入好友邮箱',
-            hintText: 'example@email.com',
+            labelText: '输入好友手机号',
+            hintText: '13812345678',
           ),
-          keyboardType: TextInputType.emailAddress,
+          keyboardType: TextInputType.phone,
         ),
         actions: [
           TextButton(
@@ -80,15 +80,16 @@ class FriendsTab extends StatelessWidget {
           ),
           TextButton(
             onPressed: () async {
-              final email = controller.text.trim();
-              if (email.isEmpty) return;
+              final phone = controller.text.trim();
+              if (phone.isEmpty) return;
               
-              final success = await context.read<ChatService>().addFriend(email);
+              final success = await context.read<ChatService>().addFriend(phone);
               if (context.mounted) {
                 Navigator.pop(context);
+                final errorMsg = context.read<ChatService>().lastError;
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text(success ? '添加成功' : '添加失败，请检查邮箱'),
+                    content: Text(success ? '添加成功' : (errorMsg ?? '添加失败，请稍后重试')),
                   ),
                 );
               }

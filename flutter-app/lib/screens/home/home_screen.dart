@@ -17,12 +17,14 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
   WsConnectionStatus _previousWsStatus = WsConnectionStatus.disconnected;
+  bool _wsMessageHooked = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<ChatService>().loadFriends();
+      _bindWebSocketMessageHandler();
     });
   }
 
@@ -116,5 +118,16 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
     });
+  }
+
+  void _bindWebSocketMessageHandler() {
+    if (_wsMessageHooked) return;
+    _wsMessageHooked = true;
+
+    final auth = context.read<AuthService>();
+    final chat = context.read<ChatService>();
+    auth.wsService.onMessageReceived = (message) {
+      chat.handleIncomingMessage(message);
+    };
   }
 }

@@ -30,7 +30,7 @@ class ProfileTab extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            user.email,
+            user.phoneMasked ?? user.phone,
             textAlign: TextAlign.center,
             style: const TextStyle(color: Colors.grey),
           ),

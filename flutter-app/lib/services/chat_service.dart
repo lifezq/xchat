@@ -10,10 +10,12 @@ class ChatService extends ChangeNotifier {
   final LocalStorageService _localStorage = LocalStorageService();
 
   List<User> _friends = [];
+  String? _lastError;
   final Map<String, List<Message>> _messagesCache = {};
   final Set<String> _loadingChats = {};
 
   List<User> get friends => _friends;
+  String? get lastError => _lastError;
 
   Future<void> loadFriends() async {
     try {
@@ -56,6 +58,20 @@ class ChatService extends ChangeNotifier {
   List<Message> getMessages(String userId1, String userId2) {
     final chatKey = _getChatKey(userId1, userId2);
     return _messagesCache[chatKey] ?? [];
+  }
+
+  Future<void> handleIncomingMessage(Message message) async {
+    final chatKey = _getChatKey(message.senderId, message.receiverId);
+    final List<Message> messages =
+        List<Message>.from(_messagesCache[chatKey] ?? const <Message>[]);
+    final exists = messages.any((m) => m.id == message.id);
+    if (!exists) {
+      messages.add(message);
+      messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      _messagesCache[chatKey] = messages;
+      await _localStorage.saveMessage(message);
+      notifyListeners();
+    }
   }
 
   Future<void> loadMessages(String userId1, String userId2) async {
@@ -118,8 +134,11 @@ class ChatService extends ChangeNotifier {
       await _localStorage.saveMessage(message);
 
       final chatKey = _getChatKey(senderId, receiverId);
-      _messagesCache[chatKey] = [...(_messagesCache[chatKey] ?? []), message]
-        ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      final List<Message> messages =
+          List<Message>.from(_messagesCache[chatKey] ?? const <Message>[]);
+      messages.add(message);
+      messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      _messagesCache[chatKey] = messages;
 
       notifyListeners();
     } catch (e) {
@@ -127,9 +146,10 @@ class ChatService extends ChangeNotifier {
     }
   }
 
-  Future<bool> addFriend(String email) async {
+  Future<bool> addFriend(String phone) async {
+    _lastError = null;
     try {
-      final friend = await _apiService.addFriend(email);
+      final friend = await _apiService.addFriend(phone);
       await _localStorage.saveUser(friend);
 
       final exists = _friends.any((f) => f.id == friend.id);
@@ -139,6 +159,7 @@ class ChatService extends ChangeNotifier {
       notifyListeners();
       return true;
     } catch (e) {
+      _lastError = e.toString().replaceFirst('Exception: ', '');
       debugPrint('添加好友失败: $e');
       return false;
     }
@@ -155,6 +176,7 @@ class ChatService extends ChangeNotifier {
     var changed = false;
     for (var i = 0; i < messages.length; i++) {
       if (messages[i].receiverId == currentUserId && !messages[i].isRead) {
+        final now = DateTime.now();
         messages[i] = Message(
           id: messages[i].id,
           senderId: messages[i].senderId,
@@ -164,6 +186,9 @@ class ChatService extends ChangeNotifier {
           type: messages[i].type,
           timestamp: messages[i].timestamp,
           isRead: true,
+          status: MessageStatus.read,
+          deliveredAt: messages[i].deliveredAt ?? now,
+          readAt: now,
         );
         changed = true;
       }

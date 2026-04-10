@@ -6,9 +6,13 @@ import '../models/user.dart';
 import '../models/message.dart';
 
 class ApiService {
+  static final ApiService _instance = ApiService._internal();
+  factory ApiService() => _instance;
+  ApiService._internal();
+
   static const String baseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://localhost:8090/api',
+    defaultValue: 'http://172.16.20.95:8090/api',
   );
   
   String? _accessToken;
@@ -110,14 +114,14 @@ class ApiService {
   }
 
   // 认证相关
-  Future<Map<String, dynamic>> register(String email, String password, String nickname) async {
+  Future<Map<String, dynamic>> register(String phone, String password, String nickname) async {
     late final http.Response response;
     try {
       response = await http.post(
         Uri.parse('$baseUrl/auth/register'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'email': email,
+          'phone': phone,
           'password': password,
           'nickname': nickname,
         }),
@@ -126,7 +130,7 @@ class ApiService {
       throw Exception('无法连接后端: $baseUrl（真机请使用电脑局域网 IP）');
     }
 
-    if (response.statusCode == 201) {
+    if (response.statusCode == 200 || response.statusCode == 201) {
       return _asMap(_decodeBody(response.body));
     } else {
       final error = _extractError(response, '注册失败');
@@ -134,12 +138,12 @@ class ApiService {
     }
   }
 
-  Future<Map<String, dynamic>> login(String email, String password) async {
+  Future<Map<String, dynamic>> login(String phone, String password) async {
     final response = await http.post(
       Uri.parse('$baseUrl/auth/login'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
-        'email': email,
+        'phone': phone,
         'password': password,
       }),
     );
@@ -148,8 +152,8 @@ class ApiService {
       final data = _decodeBody(response.body);
       final payload = _payloadMap(data);
 
-      final token = (payload['accessToken'] ?? payload['token'])?.toString();
-      final refresh = payload['refreshToken']?.toString();
+      final token = (payload['accessToken'] ?? payload['access_token'] ?? payload['token'])?.toString();
+      final refresh = (payload['refreshToken'] ?? payload['refresh_token'])?.toString();
       if (token == null || token.isEmpty) {
         throw Exception('登录响应缺少 access token');
       }
@@ -170,7 +174,7 @@ class ApiService {
       response = await http.post(
         Uri.parse('$baseUrl/auth/refresh'),
         headers: _getHeaders(withAuth: false),
-        body: jsonEncode({'refreshToken': _refreshToken}),
+        body: jsonEncode({'refresh_token': _refreshToken}),
       );
     } on SocketException {
       return false;
@@ -182,8 +186,8 @@ class ApiService {
 
     final data = _decodeBody(response.body);
     final payload = _payloadMap(data);
-    final token = (payload['accessToken'] ?? payload['token'])?.toString();
-    final refresh = payload['refreshToken']?.toString();
+    final token = (payload['accessToken'] ?? payload['access_token'] ?? payload['token'])?.toString();
+    final refresh = (payload['refreshToken'] ?? payload['refresh_token'])?.toString();
     if (token == null || token.isEmpty) {
       return false;
     }
@@ -196,8 +200,8 @@ class ApiService {
       try {
         await http.post(
           Uri.parse('$baseUrl/auth/logout'),
-          headers: _getHeaders(withAuth: false),
-          body: jsonEncode({'refreshToken': _refreshToken}),
+          headers: _getHeaders(),
+          body: jsonEncode({'refresh_token': _refreshToken}),
         );
       } catch (_) {}
     }
@@ -219,9 +223,9 @@ class ApiService {
     }
   }
 
-  Future<User> searchUser(String email) async {
+  Future<User> searchUser(String phone) async {
     final response = await _withAutoRefresh(() => http.get(
-      Uri.parse('$baseUrl/users/search?email=$email'),
+      Uri.parse('$baseUrl/friends/search?phone=$phone'),
       headers: _getHeaders(),
     ));
 
@@ -249,14 +253,14 @@ class ApiService {
     }
   }
 
-  Future<User> addFriend(String email) async {
+  Future<User> addFriend(String phone) async {
     final response = await _withAutoRefresh(() => http.post(
-      Uri.parse('$baseUrl/friends'),
+      Uri.parse('$baseUrl/friends/add-by-phone'),
       headers: _getHeaders(),
-      body: jsonEncode({'friendEmail': email}),
+      body: jsonEncode({'phone': phone}),
     ));
 
-    if (response.statusCode == 201) {
+    if (response.statusCode == 200 || response.statusCode == 201) {
       final data = _decodeBody(response.body);
       return User.fromJson(_asMap(_payloadField(data, 'friend')));
     } else {

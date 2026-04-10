@@ -1,5 +1,7 @@
 enum MessageType { text, voice }
 
+enum MessageStatus { sent, delivered, read }
+
 class Message {
   final String id;
   final String senderId;
@@ -9,6 +11,9 @@ class Message {
   final MessageType type;
   final DateTime timestamp;
   final bool isRead;
+  final MessageStatus status;
+  final DateTime? deliveredAt;
+  final DateTime? readAt;
 
   Message({
     required this.id,
@@ -19,6 +24,9 @@ class Message {
     required this.type,
     required this.timestamp,
     this.isRead = false,
+    this.status = MessageStatus.sent,
+    this.deliveredAt,
+    this.readAt,
   });
 
   factory Message.fromJson(Map<String, dynamic> json) {
@@ -34,6 +42,12 @@ class Message {
       ),
       timestamp: DateTime.parse(json['timestamp']),
       isRead: json['isRead'] ?? false,
+      status: MessageStatus.values.firstWhere(
+        (e) => e.toString() == 'MessageStatus.${json['status'] ?? 'sent'}',
+        orElse: () => (json['isRead'] == true ? MessageStatus.read : MessageStatus.sent),
+      ),
+      deliveredAt: json['deliveredAt'] != null ? DateTime.tryParse(json['deliveredAt']) : null,
+      readAt: json['readAt'] != null ? DateTime.tryParse(json['readAt']) : null,
     );
   }
 
@@ -47,6 +61,9 @@ class Message {
       'type': type.toString().split('.').last,
       'timestamp': timestamp.toIso8601String(),
       'isRead': isRead,
+      'status': status.toString().split('.').last,
+      'deliveredAt': deliveredAt?.toIso8601String(),
+      'readAt': readAt?.toIso8601String(),
     };
   }
 }

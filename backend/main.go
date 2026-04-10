@@ -106,7 +106,6 @@ func main() {
 		auth.POST("/register", authHandler.Register)
 		auth.POST("/login", authHandler.Login)
 		auth.POST("/refresh", authHandler.Refresh)
-		auth.POST("/logout", authHandler.Logout)
 	}
 
 	// 需要认证的路由
@@ -117,14 +116,17 @@ func main() {
 		userHandler := handlers.NewUserHandler(db)
 		api.GET("/users/search", userHandler.SearchUsers)
 		api.GET("/users/me", userHandler.GetCurrentUser)
+		authHandler := handlers.NewAuthHandler(authService)
+		api.POST("/auth/logout", authHandler.Logout)
 
 		// 好友相关
 		friendHandler := handlers.NewFriendHandler(db)
-		api.POST("/friends", friendHandler.AddFriend)
 		api.GET("/friends", friendHandler.GetFriends)
+		api.GET("/friends/search", friendHandler.SearchByPhone)
+		api.POST("/friends/add-by-phone", friendHandler.AddByPhone)
 
 		// 消息相关
-		messageHandler := handlers.NewMessageHandler(chatService)
+		messageHandler := handlers.NewMessageHandler(chatService, wsHub)
 		api.GET("/messages/:friendId", messageHandler.GetMessages)
 		api.POST("/messages", messageHandler.SendMessage)
 		api.GET("/conversations", messageHandler.GetConversations)

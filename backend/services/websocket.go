@@ -82,18 +82,18 @@ func (h *WebSocketHub) UnregisterClient(client *Client) {
 }
 
 // SendToUser 发送消息给指定用户
-func (h *WebSocketHub) SendToUser(userID uint, message interface{}) error {
+func (h *WebSocketHub) SendToUser(userID uint, message interface{}) (bool, error) {
 	h.mu.RLock()
 	client, ok := h.clients[userID]
 	h.mu.RUnlock()
 
 	if !ok {
-		return nil // 用户不在线
+		return false, nil // 用户不在线
 	}
 
 	data, err := json.Marshal(message)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	select {
@@ -103,7 +103,7 @@ func (h *WebSocketHub) SendToUser(userID uint, message interface{}) error {
 		h.UnregisterClient(client)
 	}
 
-	return nil
+	return true, nil
 }
 
 // ReadPump 读取客户端消息

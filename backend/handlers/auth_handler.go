@@ -18,22 +18,22 @@ func NewAuthHandler(authService *services.AuthService) *AuthHandler {
 }
 
 type RegisterRequest struct {
-	Email    string `json:"email" binding:"required,email"`
+	Phone    string `json:"phone" binding:"required"`
 	Password string `json:"password" binding:"required,min=6"`
 	Nickname string `json:"nickname" binding:"required,min=2"`
 }
 
 type LoginRequest struct {
-	Email    string `json:"email" binding:"required,email"`
+	Phone    string `json:"phone" binding:"required"`
 	Password string `json:"password" binding:"required"`
 }
 
 type RefreshRequest struct {
-	RefreshToken string `json:"refreshToken" binding:"required"`
+	RefreshToken string `json:"refresh_token" binding:"required"`
 }
 
 type LogoutRequest struct {
-	RefreshToken string `json:"refreshToken" binding:"required"`
+	RefreshToken string `json:"refresh_token" binding:"required"`
 }
 
 func (h *AuthHandler) Register(c *gin.Context) {
@@ -43,18 +43,25 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	user, err := h.authService.Register(req.Email, req.Password, req.Nickname)
+	accessToken, refreshToken, user, err := h.authService.Register(req.Phone, req.Password, req.Nickname)
 	if err != nil {
 		h.writeError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{
+	c.JSON(http.StatusOK, gin.H{
 		"code":    "OK",
 		"message": "注册成功",
-		"data":    gin.H{"user": user},
+		"data": gin.H{
+			"user":          user,
+			"access_token":  accessToken,
+			"refresh_token": refreshToken,
+		},
 		// legacy fields for existing app compatibility
-		"user": user,
+		"user":         user,
+		"token":        accessToken,
+		"accessToken":  accessToken,
+		"refreshToken": refreshToken,
 	})
 }
 
@@ -65,7 +72,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	accessToken, refreshToken, user, err := h.authService.Login(req.Email, req.Password)
+	accessToken, refreshToken, user, err := h.authService.Login(req.Phone, req.Password)
 	if err != nil {
 		h.writeError(c, err)
 		return
@@ -75,9 +82,9 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		"code":    "OK",
 		"message": "登录成功",
 		"data": gin.H{
-			"accessToken":  accessToken,
-			"refreshToken": refreshToken,
-			"user":         user,
+			"access_token":  accessToken,
+			"refresh_token": refreshToken,
+			"user":          user,
 		},
 		// legacy fields for existing app compatibility
 		"token":        accessToken,
@@ -104,8 +111,8 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		"code":    "OK",
 		"message": "刷新令牌成功",
 		"data": gin.H{
-			"accessToken":  accessToken,
-			"refreshToken": refreshToken,
+			"access_token":  accessToken,
+			"refresh_token": refreshToken,
 		},
 		"token":        accessToken,
 		"accessToken":  accessToken,
@@ -138,8 +145,10 @@ func (h *AuthHandler) writeError(c *gin.Context, err error) {
 		switch appErr.Code {
 		case apperrors.ErrInvalidCredentials.Code, apperrors.ErrUnauthorized.Code:
 			status = http.StatusUnauthorized
-		case apperrors.ErrEmailExists.Code:
+		case apperrors.ErrPhoneExists.Code:
 			status = http.StatusConflict
+		case apperrors.ErrPhoneInvalid.Code:
+			status = http.StatusBadRequest
 		}
 		h.writeAppError(c, appErr, status)
 		return

@@ -28,6 +28,7 @@ func (s *ChatService) SendMessage(senderID, receiverID uint, content, msgType, v
 		Type:       msgType,
 		VoiceURL:   voiceURL,
 		IsRead:     false,
+		Status:     "sent",
 	}
 
 	if err := s.db.Create(message).Error; err != nil {
@@ -54,10 +55,25 @@ func (s *ChatService) GetMessages(userID, friendID uint, limit, offset int) ([]m
 	return messages, err
 }
 
+func (s *ChatService) MarkAsDelivered(messageID uint) error {
+	now := time.Now()
+	return s.db.Model(&models.Message{}).
+		Where("id = ? AND status = ?", messageID, "sent").
+		Updates(map[string]interface{}{
+			"status":       "delivered",
+			"delivered_at": &now,
+		}).Error
+}
+
 func (s *ChatService) MarkAsRead(userID, friendID uint) error {
+	now := time.Now()
 	err := s.db.Model(&models.Message{}).
 		Where("sender_id = ? AND receiver_id = ? AND is_read = ?", friendID, userID, false).
-		Update("is_read", true).Error
+		Updates(map[string]interface{}{
+			"is_read":  true,
+			"status":   "read",
+			"read_at":  &now,
+		}).Error
 
 	if err == nil {
 		s.clearUnreadCount(userID, friendID)
