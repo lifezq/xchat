@@ -1,0 +1,78 @@
+# 服务器配置
+server:
+  port: 8090
+  mode: debug  # debug, release, test
+  read_timeout: 60
+  write_timeout: 60
+
+# 数据库配置
+database:
+  host: localhost
+  port: 3306
+  user: root
+  password: your_password_here
+  dbname: chat_db
+  charset: utf8mb4
+  parse_time: true
+  max_idle_conns: 10
+  max_open_conns: 100
+  conn_max_lifetime: 3600
+
+# Redis 配置
+redis:
+  host: localhost
+  port: 6379
+  password: ""
+  db: 0
+  pool_size: 10
+
+# JWT 配置
+jwt:
+  secret: change-this-to-a-secure-random-string
+  expire_hours: 168
+
+# 文件上传配置
+upload:
+  voice_dir: ./uploads/voice
+  max_size: 10485760
+  allowed_exts:
+    - .m4a
+    - .mp3
+    - .wav
+
+# 日志配置
+log:
+  level: info
+  format: json
+  output: stdout
+  file_path: ./logs/app.log
+  max_size: 100
+  max_backups: 3
+  max_age: 28
+  compress: true
+
+# CORS 配置
+cors:
+  allow_origins:
+    - "*"
+  allow_methods:
+    - GET
+    - POST
+    - PUT
+    - DELETE
+    - OPTIONS
+  allow_headers:
+    - Origin
+    - Content-Type
+    - Authorization
+  expose_headers:
+    - Content-Length
+  allow_credentials: true
+  max_age: 43200
+
+# WebSocket 配置
+websocket:
+  read_buffer_size: 1024
+  write_buffer_size: 1024
+  heartbeat_interval: 30
+  max_message_size: 512

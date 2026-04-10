@@ -1,0 +1,14 @@
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Backend
+backend/main
+backend/.env
+backend/uploads/
+*.log
+flutter-app/.dart_tool
+flutter-app/build
