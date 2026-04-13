@@ -23,8 +23,13 @@ func NewMessageHandler(chatService *services.ChatService, hub *services.WebSocke
 type SendMessageRequest struct {
 	ReceiverID uint   `json:"receiverId" binding:"required"`
 	Content    string `json:"content" binding:"required"`
-	Type       string `json:"type" binding:"required,oneof=text voice"`
+	Type       string `json:"type" binding:"required,oneof=text voice image video file emoji"`
 	VoiceURL   string `json:"voiceUrl"`
+}
+
+type MarkReadRequest struct {
+	PeerID            uint `json:"peerId" binding:"required"`
+	ReadUptoMessageID uint `json:"readUptoMessageId"`
 }
 
 func (h *MessageHandler) SendMessage(c *gin.Context) {
@@ -75,9 +80,35 @@ func (h *MessageHandler) GetMessages(c *gin.Context) {
 		return
 	}
 
-	h.chatService.MarkAsRead(userID, uint(friendID))
-
 	writeSuccess(c, 200, "获取消息成功", gin.H{"messages": messages})
+}
+
+func (h *MessageHandler) MarkMessagesRead(c *gin.Context) {
+	userID := c.GetUint("userID")
+
+	var req MarkReadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeBadRequest(c, "请求参数无效")
+		return
+	}
+
+	if err := h.chatService.MarkAsReadUpTo(userID, req.PeerID, req.ReadUptoMessageID); err != nil {
+		writeInternalError(c, "更新已读状态失败")
+		return
+	}
+
+	readAt := time.Now().Format(time.RFC3339Nano)
+	_, _ = h.hub.SendToUser(req.PeerID, gin.H{
+		"event": "read_receipt",
+		"data": gin.H{
+			"readerId":          userID,
+			"peerId":            req.PeerID,
+			"readUptoMessageId": req.ReadUptoMessageID,
+			"readAt":            readAt,
+		},
+	})
+
+	writeSuccess(c, 200, "更新已读状态成功", gin.H{})
 }
 
 func (h *MessageHandler) GetConversations(c *gin.Context) {

@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lifezq/log"
 	"go.uber.org/zap/zapcore"
+	"gorm.io/gorm"
 )
 
 var ctx = context.Background()
@@ -66,6 +67,7 @@ func main() {
 	if err := models.AutoMigrate(db); err != nil {
 		log.Fatalf(ctx, "数据库迁移失败: %v", err)
 	}
+	logDatabaseSnapshot(db)
 
 	// 初始化 Redis
 	rdb := config.InitRedis(cfg)
@@ -74,6 +76,11 @@ func main() {
 	log.Infof(ctx, "创建上传目录: %s", cfg.Upload.VoiceDir)
 	if err := os.MkdirAll(cfg.Upload.VoiceDir, 0755); err != nil {
 		log.Fatalf(ctx, "创建上传目录失败: %v", err)
+	}
+	chatUploadDir := "./uploads/chat"
+	log.Infof(ctx, "创建聊天附件目录: %s", chatUploadDir)
+	if err := os.MkdirAll(chatUploadDir, 0755); err != nil {
+		log.Fatalf(ctx, "创建聊天附件目录失败: %v", err)
 	}
 
 	// 初始化服务
@@ -129,6 +136,7 @@ func main() {
 		messageHandler := handlers.NewMessageHandler(chatService, wsHub)
 		api.GET("/messages/:friendId", messageHandler.GetMessages)
 		api.POST("/messages", messageHandler.SendMessage)
+		api.POST("/messages/read", messageHandler.MarkMessagesRead)
 		api.GET("/conversations", messageHandler.GetConversations)
 
 		// WebSocket
@@ -138,6 +146,8 @@ func main() {
 		// 文件上传
 		uploadHandler := handlers.NewUploadHandler(cfg.Upload.VoiceDir, cfg.Upload.MaxSize, cfg.Upload.AllowedExts)
 		api.POST("/upload/voice", uploadHandler.UploadVoice)
+		chatUploadHandler := handlers.NewUploadHandler(chatUploadDir, cfg.Upload.MaxSize*5, nil)
+		api.POST("/upload/file", chatUploadHandler.UploadFile)
 	}
 
 	log.Infof(ctx, "服务器启动在端口 %s (模式: %s)", cfg.GetServerAddr(), cfg.Server.Mode)
@@ -145,5 +155,31 @@ func main() {
 
 	if err := r.Run(cfg.GetServerAddr()); err != nil {
 		log.Fatalf(ctx, "服务器启动失败: %v", err)
+	}
+}
+
+func logDatabaseSnapshot(db *gorm.DB) {
+	var meta struct {
+		DBName   string `gorm:"column:db_name"`
+		HostName string `gorm:"column:host_name"`
+	}
+	if err := db.Raw("SELECT DATABASE() AS db_name, @@hostname AS host_name").Scan(&meta).Error; err != nil {
+		log.Warnf(ctx, "读取数据库元信息失败: %v", err)
+	} else {
+		log.Infof(ctx, "当前数据库连接: db=%s host=%s", meta.DBName, meta.HostName)
+	}
+
+	var userCount int64
+	if err := db.Model(&models.User{}).Count(&userCount).Error; err != nil {
+		log.Warnf(ctx, "统计 users 数量失败: %v", err)
+	} else {
+		log.Infof(ctx, "users 总数: %d", userCount)
+	}
+
+	var messageCount int64
+	if err := db.Model(&models.Message{}).Count(&messageCount).Error; err != nil {
+		log.Warnf(ctx, "统计 messages 数量失败: %v", err)
+	} else {
+		log.Infof(ctx, "messages 总数: %d", messageCount)
 	}
 }

@@ -4,6 +4,22 @@ import '../models/user.dart';
 import 'api_service.dart';
 import 'websocket_service.dart';
 
+class SavedAccount {
+  final String userId;
+  final String phone;
+  final String phoneMasked;
+  final String nickname;
+  final DateTime updatedAt;
+
+  SavedAccount({
+    required this.userId,
+    required this.phone,
+    required this.phoneMasked,
+    required this.nickname,
+    required this.updatedAt,
+  });
+}
+
 class AuthService extends ChangeNotifier {
   static const Duration _startupAuthTimeout = Duration(seconds: 2);
   final ApiService _apiService = ApiService();
@@ -13,6 +29,7 @@ class AuthService extends ChangeNotifier {
   bool _isLoading = false;
   String? _lastError;
   WsConnectionStatus _wsConnectionStatus = WsConnectionStatus.disconnected;
+  List<SavedAccount> _savedAccounts = <SavedAccount>[];
 
   AuthService() {
     _wsService.onConnectionChanged = (status) {
@@ -27,6 +44,7 @@ class AuthService extends ChangeNotifier {
   WebSocketService get wsService => _wsService;
   String? get lastError => _lastError;
   WsConnectionStatus get wsConnectionStatus => _wsConnectionStatus;
+  List<SavedAccount> get savedAccounts => _savedAccounts;
 
   Future<void> checkAuthStatus() async {
     _isLoading = true;
@@ -45,6 +63,8 @@ class AuthService extends ChangeNotifier {
       _currentUser = await _apiService
           .getCurrentUser()
           .timeout(_startupAuthTimeout);
+      await _apiService.saveAccountSession(_currentUser!);
+      await loadSavedAccounts();
 
       _wsService.connect();
     } on TimeoutException {
@@ -56,6 +76,20 @@ class AuthService extends ChangeNotifier {
     }
 
     _isLoading = false;
+    notifyListeners();
+  }
+
+  Future<void> loadSavedAccounts() async {
+    final sessions = await _apiService.getSavedAccountSessions();
+    _savedAccounts = sessions.map((s) {
+      return SavedAccount(
+        userId: s['userId']?.toString() ?? '',
+        phone: s['phone']?.toString() ?? '',
+        phoneMasked: s['phoneMasked']?.toString() ?? '',
+        nickname: s['nickname']?.toString() ?? '',
+        updatedAt: DateTime.tryParse(s['updatedAt']?.toString() ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0),
+      );
+    }).where((a) => a.userId.isNotEmpty).toList();
     notifyListeners();
   }
 
@@ -89,6 +123,8 @@ class AuthService extends ChangeNotifier {
           : data;
       final userJson = payload['user'] ?? data['user'];
       _currentUser = User.fromJson(userJson);
+      await _apiService.saveAccountSession(_currentUser!);
+      await loadSavedAccounts();
 
       final token = (_apiService.accessToken ?? payload['accessToken'] ?? data['token'])?.toString();
       if (token != null && token.isNotEmpty) {
@@ -111,6 +147,60 @@ class AuthService extends ChangeNotifier {
     await _apiService.logout();
     
     _currentUser = null;
+    notifyListeners();
+  }
+
+  Future<void> switchAccount() async {
+    _wsService.disconnect();
+    await _apiService.clearTokens();
+    _currentUser = null;
+    _lastError = null;
+    notifyListeners();
+  }
+
+  Future<bool> switchToSavedAccount(String userId) async {
+    _isLoading = true;
+    _lastError = null;
+    notifyListeners();
+
+    _wsService.disconnect();
+    final activated = await _apiService.activateAccountSession(userId);
+    if (!activated) {
+      _isLoading = false;
+      _lastError = '该账号会话无效，请重新登录';
+      notifyListeners();
+      return false;
+    }
+
+    try {
+      _currentUser = await _apiService
+          .getCurrentUser()
+          .timeout(_startupAuthTimeout);
+      await _apiService.saveAccountSession(_currentUser!);
+      await loadSavedAccounts();
+      _wsService.connect();
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (_) {
+      await _apiService.removeAccountSession(userId);
+      await _apiService.clearTokens();
+      _currentUser = null;
+      _isLoading = false;
+      _lastError = '该账号登录已失效，请重新登录';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<void> removeSavedAccount(String userId) async {
+    await _apiService.removeAccountSession(userId);
+    if (_currentUser?.id == userId) {
+      _wsService.disconnect();
+      await _apiService.clearTokens();
+      _currentUser = null;
+    }
+    await loadSavedAccounts();
     notifyListeners();
   }
 }

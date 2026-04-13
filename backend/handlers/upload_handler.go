@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -24,6 +25,20 @@ func NewUploadHandler(uploadDir string, maxSize int64, allowedExts []string) *Up
 }
 
 func (h *UploadHandler) UploadVoice(c *gin.Context) {
+	h.uploadWithPolicy(c, h.allowedExts, "上传语音成功", "/uploads/voice")
+}
+
+func (h *UploadHandler) UploadFile(c *gin.Context) {
+	allowedExts := []string{
+		".jpg", ".jpeg", ".png", ".gif", ".webp",
+		".mp4", ".mov", ".avi", ".mkv", ".webm",
+		".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt",
+		".zip", ".rar", ".7z",
+	}
+	h.uploadWithPolicy(c, allowedExts, "上传文件成功", "/uploads/chat")
+}
+
+func (h *UploadHandler) uploadWithPolicy(c *gin.Context, allowedExts []string, successMsg string, urlPrefix string) {
 	file, err := c.FormFile("file")
 	if err != nil {
 		writeBadRequest(c, "文件上传失败")
@@ -37,10 +52,10 @@ func (h *UploadHandler) UploadVoice(c *gin.Context) {
 	}
 
 	// 验证文件类型
-	ext := filepath.Ext(file.Filename)
+	ext := strings.ToLower(filepath.Ext(file.Filename))
 	allowed := false
-	for _, allowedExt := range h.allowedExts {
-		if ext == allowedExt {
+	for _, allowedExt := range allowedExts {
+		if ext == strings.ToLower(allowedExt) {
 			allowed = true
 			break
 		}
@@ -60,6 +75,6 @@ func (h *UploadHandler) UploadVoice(c *gin.Context) {
 	}
 
 	// 返回文件 URL
-	url := fmt.Sprintf("/uploads/voice/%s", filename)
-	writeSuccess(c, 200, "上传语音成功", gin.H{"url": url})
+	url := fmt.Sprintf("%s/%s", urlPrefix, filename)
+	writeSuccess(c, 200, successMsg, gin.H{"url": url})
 }

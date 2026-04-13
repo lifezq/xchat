@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
 import '../../services/chat_service.dart';
 import '../../services/websocket_service.dart';
+import '../auth/login_screen.dart';
 import 'conversations_tab.dart';
 import 'friends_tab.dart';
 import 'profile_tab.dart';
@@ -18,12 +19,15 @@ class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
   WsConnectionStatus _previousWsStatus = WsConnectionStatus.disconnected;
   bool _wsMessageHooked = false;
+  bool _redirectingToLogin = false;
+  String? _lastUserId;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<ChatService>().loadFriends();
+      context.read<ChatService>().loadConversations();
       _bindWebSocketMessageHandler();
     });
   }
@@ -32,11 +36,36 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
     final currentUser = auth.currentUser;
+    if (currentUser == null) {
+      if (!_redirectingToLogin) {
+        _redirectingToLogin = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const LoginScreen()),
+            (route) => false,
+          );
+        });
+      }
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+    _redirectingToLogin = false;
+    if (_lastUserId != currentUser.id) {
+      _lastUserId = currentUser.id;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        context.read<ChatService>().loadFriends();
+        context.read<ChatService>().loadConversations();
+      });
+    }
+
     final wsStatus = auth.wsConnectionStatus;
     _handleWsStatusTransition(wsStatus);
     
     final tabs = [
-      ConversationsTab(currentUserId: currentUser!.id),
+      ConversationsTab(currentUserId: currentUser.id),
       FriendsTab(currentUserId: currentUser.id),
       const ProfileTab(),
     ];
@@ -128,6 +157,20 @@ class _HomeScreenState extends State<HomeScreen> {
     final chat = context.read<ChatService>();
     auth.wsService.onMessageReceived = (message) {
       chat.handleIncomingMessage(message);
+    };
+    auth.wsService.onReadReceipt = (payload) {
+      final readerId = payload['readerId']?.toString();
+      final readUptoMessageId = payload['readUptoMessageId']?.toString();
+      final readAtRaw = payload['readAt']?.toString();
+      if (readerId == null || readUptoMessageId == null) {
+        return;
+      }
+      final readAt = readAtRaw == null ? null : DateTime.tryParse(readAtRaw);
+      chat.handleReadReceipt(
+        readerId: readerId,
+        readUptoMessageId: readUptoMessageId,
+        readAt: readAt,
+      );
     };
   }
 }

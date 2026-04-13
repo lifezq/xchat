@@ -1,4 +1,4 @@
-enum MessageType { text, voice }
+enum MessageType { text, voice, image, video, file, emoji }
 
 enum MessageStatus { sent, delivered, read }
 

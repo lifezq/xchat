@@ -14,6 +14,11 @@ class ApiService {
     'API_BASE_URL',
     defaultValue: 'http://172.16.20.95:8090/api',
   );
+  static const String _keyAccessToken = 'accessToken';
+  static const String _keyLegacyToken = 'token';
+  static const String _keyRefreshToken = 'refreshToken';
+  static const String _keyCurrentSessionUserId = 'currentSessionUserId';
+  static const String _keyAccountSessions = 'accountSessions';
   
   String? _accessToken;
   String? _refreshToken;
@@ -23,8 +28,8 @@ class ApiService {
 
   Future<void> loadTokens() async {
     final prefs = await SharedPreferences.getInstance();
-    _accessToken = prefs.getString('accessToken') ?? prefs.getString('token');
-    _refreshToken = prefs.getString('refreshToken');
+    _accessToken = prefs.getString(_keyAccessToken) ?? prefs.getString(_keyLegacyToken);
+    _refreshToken = prefs.getString(_keyRefreshToken);
   }
 
   Future<void> saveTokens(String accessToken, {String? refreshToken}) async {
@@ -34,10 +39,10 @@ class ApiService {
     }
 
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('token', accessToken);
-    await prefs.setString('accessToken', accessToken);
+    await prefs.setString(_keyLegacyToken, accessToken);
+    await prefs.setString(_keyAccessToken, accessToken);
     if (_refreshToken != null) {
-      await prefs.setString('refreshToken', _refreshToken!);
+      await prefs.setString(_keyRefreshToken, _refreshToken!);
     }
   }
 
@@ -45,9 +50,76 @@ class ApiService {
     _accessToken = null;
     _refreshToken = null;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('token');
-    await prefs.remove('accessToken');
-    await prefs.remove('refreshToken');
+    await prefs.remove(_keyLegacyToken);
+    await prefs.remove(_keyAccessToken);
+    await prefs.remove(_keyRefreshToken);
+    await prefs.remove(_keyCurrentSessionUserId);
+  }
+
+  Future<Map<String, dynamic>> _loadSessions(SharedPreferences prefs) async {
+    final raw = prefs.getString(_keyAccountSessions);
+    if (raw == null || raw.isEmpty) return <String, dynamic>{};
+    try {
+      final decoded = jsonDecode(raw);
+      return _asMap(decoded);
+    } catch (_) {
+      return <String, dynamic>{};
+    }
+  }
+
+  Future<void> saveAccountSession(User user) async {
+    final token = _accessToken;
+    if (token == null || token.isEmpty) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final sessions = await _loadSessions(prefs);
+    sessions[user.id] = <String, dynamic>{
+      'userId': user.id,
+      'phone': user.phone,
+      'phoneMasked': user.phoneMasked ?? user.phone,
+      'nickname': user.nickname,
+      'accessToken': token,
+      'refreshToken': _refreshToken ?? '',
+      'updatedAt': DateTime.now().toIso8601String(),
+    };
+    await prefs.setString(_keyAccountSessions, jsonEncode(sessions));
+    await prefs.setString(_keyCurrentSessionUserId, user.id);
+  }
+
+  Future<List<Map<String, dynamic>>> getSavedAccountSessions() async {
+    final prefs = await SharedPreferences.getInstance();
+    final sessions = await _loadSessions(prefs);
+    final list = sessions.values.map((e) => _asMap(e)).toList();
+    list.sort((a, b) {
+      final aTime = DateTime.tryParse(a['updatedAt']?.toString() ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final bTime = DateTime.tryParse(b['updatedAt']?.toString() ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return bTime.compareTo(aTime);
+    });
+    return list;
+  }
+
+  Future<bool> activateAccountSession(String userId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final sessions = await _loadSessions(prefs);
+    final target = _asMap(sessions[userId]);
+    final accessToken = target['accessToken']?.toString() ?? '';
+    if (accessToken.isEmpty) return false;
+
+    final refreshToken = target['refreshToken']?.toString();
+    await saveTokens(accessToken, refreshToken: refreshToken);
+    await prefs.setString(_keyCurrentSessionUserId, userId);
+    return true;
+  }
+
+  Future<void> removeAccountSession(String userId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final sessions = await _loadSessions(prefs);
+    sessions.remove(userId);
+    await prefs.setString(_keyAccountSessions, jsonEncode(sessions));
+    final currentUserId = prefs.getString(_keyCurrentSessionUserId);
+    if (currentUserId == userId) {
+      await prefs.remove(_keyCurrentSessionUserId);
+    }
   }
 
   Map<String, String> _getHeaders({bool withAuth = true}) {
@@ -192,6 +264,19 @@ class ApiService {
       return false;
     }
     await saveTokens(token, refreshToken: refresh);
+    final prefs = await SharedPreferences.getInstance();
+    final currentUserId = prefs.getString(_keyCurrentSessionUserId);
+    if (currentUserId != null && currentUserId.isNotEmpty) {
+      final sessions = await _loadSessions(prefs);
+      final session = _asMap(sessions[currentUserId]);
+      if (session.isNotEmpty) {
+        session['accessToken'] = token;
+        session['refreshToken'] = refresh ?? '';
+        session['updatedAt'] = DateTime.now().toIso8601String();
+        sessions[currentUserId] = session;
+        await prefs.setString(_keyAccountSessions, jsonEncode(sessions));
+      }
+    }
     return true;
   }
 
@@ -304,6 +389,21 @@ class ApiService {
     }
   }
 
+  Future<void> markMessagesRead(int peerId, {int? readUptoMessageId}) async {
+    final response = await _withAutoRefresh(() => http.post(
+      Uri.parse('$baseUrl/messages/read'),
+      headers: _getHeaders(),
+      body: jsonEncode({
+        'peerId': peerId,
+        if (readUptoMessageId != null) 'readUptoMessageId': readUptoMessageId,
+      }),
+    ));
+
+    if (response.statusCode != 200) {
+      throw Exception(_extractError(response, '更新已读状态失败'));
+    }
+  }
+
   Future<List<dynamic>> getConversations() async {
     final response = await _withAutoRefresh(() => http.get(
       Uri.parse('$baseUrl/conversations'),
@@ -348,6 +448,39 @@ class ApiService {
       return url;
     } else {
       throw Exception('上传语音失败(${response.statusCode})');
+    }
+  }
+
+  // 文件上传（图片/视频/文件）
+  Future<String> uploadFile(File file) async {
+    Future<http.StreamedResponse> sendOnce() async {
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/upload/file'),
+      );
+      request.headers.addAll(_getHeaders());
+      request.files.add(await http.MultipartFile.fromPath('file', file.path));
+      return request.send();
+    }
+
+    var response = await sendOnce();
+    if (response.statusCode == 401) {
+      final refreshed = await refreshAccessToken();
+      if (refreshed) {
+        response = await sendOnce();
+      }
+    }
+
+    if (response.statusCode == 200) {
+      final responseData = await response.stream.bytesToString();
+      final data = _decodeBody(responseData);
+      final url = (_payloadField(data, 'url') ?? '').toString();
+      if (url.isEmpty) {
+        throw Exception('上传文件失败(响应缺少url)');
+      }
+      return url;
+    } else {
+      throw Exception('上传文件失败(${response.statusCode})');
     }
   }
 }

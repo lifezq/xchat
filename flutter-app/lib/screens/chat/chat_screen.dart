@@ -1,12 +1,14 @@
 import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
-import '../../models/user.dart';
+import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../models/message.dart';
-import '../../services/chat_service.dart';
-import '../../services/audio_service.dart';
+import '../../models/user.dart';
 import '../../services/api_service.dart';
+import '../../services/audio_service.dart';
+import '../../services/chat_service.dart';
 import '../../widgets/voice_message_widget.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -29,24 +31,50 @@ class _ChatScreenState extends State<ChatScreen> {
   final _audioService = AudioService();
   final _apiService = ApiService();
   bool _isRecording = false;
+  bool _isUploading = false;
+  bool _showEmojiPanel = false;
+  bool _isSyncingReadReceipt = false;
+  late final ChatService _chatService;
+
+  static const List<String> _emojiList = <String>[
+    "😀", "😁", "😂", "🤣", "😊", "😍", "😘", "😎", "😭", "😡",
+    "👍", "👎", "👏", "🙏", "❤️", "🔥", "🎉", "💪", "🤝", "🌹",
+  ];
 
   @override
   void initState() {
     super.initState();
+    _chatService = context.read<ChatService>();
+    _chatService.addListener(_onChatServiceChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final chatService = context.read<ChatService>();
-      chatService.loadMessages(widget.currentUserId, widget.otherUser.id);
-      chatService.markAsRead(widget.currentUserId, widget.otherUser.id);
-      _scrollToBottom();
+      _loadChatData();
     });
   }
 
   @override
   void dispose() {
+    _chatService.removeListener(_onChatServiceChanged);
     _messageController.dispose();
     _scrollController.dispose();
     _audioService.dispose();
     super.dispose();
+  }
+
+  void _onChatServiceChanged() {
+    if (!mounted || _isSyncingReadReceipt) return;
+    final route = ModalRoute.of(context);
+    if (route?.isCurrent != true) return;
+
+    final messages = _chatService.getMessages(widget.currentUserId, widget.otherUser.id);
+    final hasUnreadIncoming = messages.any(
+      (m) => m.receiverId == widget.currentUserId && !m.isRead,
+    );
+    if (!hasUnreadIncoming) return;
+
+    _isSyncingReadReceipt = true;
+    _syncReadReceipt().whenComplete(() {
+      _isSyncingReadReceipt = false;
+    });
   }
 
   Future<void> _startRecording() async {
@@ -70,21 +98,20 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() => _isRecording = false);
 
     if (path != null && mounted) {
-      // 上传语音文件
       try {
         final voiceUrl = await _apiService.uploadVoice(File(path));
         if (!mounted) return;
-        
+
         await context.read<ChatService>().sendMessage(
           senderId: widget.currentUserId,
           receiverId: widget.otherUser.id,
           content: '[语音消息]',
           type: MessageType.voice,
-          voiceUrl: voiceUrl,
+          voiceUrl: _toAbsoluteUrl(voiceUrl),
         );
 
         WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
-      } catch (e) {
+      } catch (_) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('发送语音失败')),
@@ -92,6 +119,109 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       }
     }
+  }
+
+  Future<void> _loadChatData() async {
+    final chatService = context.read<ChatService>();
+    await chatService.loadMessages(widget.currentUserId, widget.otherUser.id);
+    await _syncReadReceipt();
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+  }
+
+  Future<void> _syncReadReceipt() async {
+    final messages = _chatService.getMessages(widget.currentUserId, widget.otherUser.id);
+    final incoming = messages
+        .where((m) => m.receiverId == widget.currentUserId)
+        .toList();
+    if (incoming.isEmpty) return;
+
+    final latestIncoming = incoming.last;
+    final latestID = int.tryParse(latestIncoming.id);
+    if (latestID == null) return;
+
+    final peerID = int.tryParse(widget.otherUser.id);
+    if (peerID == null) return;
+
+    try {
+      await _apiService.markMessagesRead(peerID, readUptoMessageId: latestID);
+      _chatService.markAsRead(widget.currentUserId, widget.otherUser.id);
+    } catch (_) {
+      // 已读回执失败不阻塞聊天主流程
+    }
+  }
+
+  Future<void> _pickAndSendImage() async {
+    final result = await FilePicker.platform.pickFiles(type: FileType.image);
+    if (result == null || result.files.isEmpty || result.files.single.path == null) {
+      return;
+    }
+    await _uploadAndSendMedia(File(result.files.single.path!), MessageType.image);
+  }
+
+  Future<void> _pickAndSendVideo() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: <String>["mp4", "mov", "avi", "mkv", "webm"],
+    );
+    if (result == null || result.files.isEmpty || result.files.single.path == null) {
+      return;
+    }
+    await _uploadAndSendMedia(File(result.files.single.path!), MessageType.video);
+  }
+
+  Future<void> _pickAndSendFile() async {
+    final result = await FilePicker.platform.pickFiles(type: FileType.any);
+    if (result == null || result.files.isEmpty || result.files.single.path == null) {
+      return;
+    }
+    await _uploadAndSendMedia(File(result.files.single.path!), MessageType.file);
+  }
+
+  Future<void> _uploadAndSendMedia(File file, MessageType type) async {
+    setState(() => _isUploading = true);
+    try {
+      final relativeUrl = await _apiService.uploadFile(file);
+      final mediaUrl = _toAbsoluteUrl(relativeUrl);
+      if (!mounted) return;
+
+      await context.read<ChatService>().sendMessage(
+            senderId: widget.currentUserId,
+            receiverId: widget.otherUser.id,
+            content: mediaUrl,
+            type: type,
+          );
+
+      if (mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('发送附件失败')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isUploading = false);
+      }
+    }
+  }
+
+  void _sendEmoji(String emoji) {
+    context.read<ChatService>().sendMessage(
+          senderId: widget.currentUserId,
+          receiverId: widget.otherUser.id,
+          content: emoji,
+          type: MessageType.emoji,
+        );
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+  }
+
+  String _toAbsoluteUrl(String url) {
+    if (url.startsWith('http')) return url;
+    final baseUri = Uri.parse(ApiService.baseUrl);
+    return '${baseUri.scheme}://${baseUri.host}:${baseUri.port}$url';
   }
 
   void _scrollToBottom() {
@@ -111,11 +241,11 @@ class _ChatScreenState extends State<ChatScreen> {
     _messageController.clear();
 
     await context.read<ChatService>().sendMessage(
-      senderId: widget.currentUserId,
-      receiverId: widget.otherUser.id,
-      content: content,
-      type: MessageType.text,
-    );
+          senderId: widget.currentUserId,
+          receiverId: widget.otherUser.id,
+          content: content,
+          type: MessageType.text,
+        );
 
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
   }
@@ -128,6 +258,8 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       body: Column(
         children: [
+          if (_isUploading)
+            const LinearProgressIndicator(minHeight: 2),
           Expanded(
             child: Consumer<ChatService>(
               builder: (context, chatService, _) {
@@ -149,7 +281,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   itemBuilder: (context, index) {
                     final message = messages[index];
                     final isMe = message.senderId == widget.currentUserId;
-                    
+
                     return _MessageBubble(
                       message: message,
                       isMe: isMe,
@@ -160,6 +292,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
           _buildInputArea(),
+          if (_showEmojiPanel) _buildEmojiPanel(),
         ],
       ),
     );
@@ -180,6 +313,45 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       child: Row(
         children: [
+          IconButton(
+            icon: const Icon(Icons.add_circle_outline),
+            onPressed: () {
+              showModalBottomSheet<void>(
+                context: context,
+                builder: (context) => SafeArea(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ListTile(
+                        leading: const Icon(Icons.image),
+                        title: const Text('图片'),
+                        onTap: () {
+                          Navigator.pop(context);
+                          _pickAndSendImage();
+                        },
+                      ),
+                      ListTile(
+                        leading: const Icon(Icons.videocam),
+                        title: const Text('视频'),
+                        onTap: () {
+                          Navigator.pop(context);
+                          _pickAndSendVideo();
+                        },
+                      ),
+                      ListTile(
+                        leading: const Icon(Icons.attach_file),
+                        title: const Text('文件'),
+                        onTap: () {
+                          Navigator.pop(context);
+                          _pickAndSendFile();
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
           GestureDetector(
             onLongPress: _startRecording,
             onLongPressEnd: (_) => _stopRecording(),
@@ -206,16 +378,52 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
               maxLines: null,
               textInputAction: TextInputAction.send,
+              onTap: () {
+                if (_showEmojiPanel) {
+                  setState(() => _showEmojiPanel = false);
+                }
+              },
               onSubmitted: (_) => _sendMessage(),
             ),
           ),
-          const SizedBox(width: 8),
+          IconButton(
+            icon: const Icon(Icons.emoji_emotions_outlined),
+            onPressed: () => setState(() => _showEmojiPanel = !_showEmojiPanel),
+          ),
           IconButton(
             icon: const Icon(Icons.send),
             onPressed: _sendMessage,
             color: Theme.of(context).primaryColor,
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildEmojiPanel() {
+    return Container(
+      height: 220,
+      padding: const EdgeInsets.all(12),
+      color: const Color(0xFFF5F5F5),
+      child: GridView.builder(
+        itemCount: _emojiList.length,
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 8,
+          mainAxisSpacing: 8,
+          crossAxisSpacing: 8,
+        ),
+        itemBuilder: (context, index) {
+          final emoji = _emojiList[index];
+          return InkWell(
+            onTap: () => _sendEmoji(emoji),
+            child: Center(
+              child: Text(
+                emoji,
+                style: const TextStyle(fontSize: 24),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -246,25 +454,7 @@ class _MessageBubble extends StatelessWidget {
             child: Column(
               crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
               children: [
-                message.type == MessageType.voice
-                  ? VoiceMessageWidget(
-                      voiceUrl: message.voiceUrl ?? message.content,
-                      isMe: isMe,
-                    )
-                  : Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                      decoration: BoxDecoration(
-                        color: isMe ? Colors.blue : Colors.grey[300],
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                      child: Text(
-                        message.content,
-                        style: TextStyle(
-                          color: isMe ? Colors.white : Colors.black87,
-                          fontSize: 15,
-                        ),
-                      ),
-                    ),
+                _buildMessageBody(context),
                 const SizedBox(height: 4),
                 Row(
                   mainAxisSize: MainAxisSize.min,
@@ -292,6 +482,118 @@ class _MessageBubble extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Widget _buildMessageBody(BuildContext context) {
+    switch (message.type) {
+      case MessageType.voice:
+        return VoiceMessageWidget(
+          voiceUrl: message.voiceUrl ?? message.content,
+          isMe: isMe,
+        );
+      case MessageType.image:
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Image.network(
+            message.content,
+            width: 180,
+            height: 180,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => _fallbackBubble('图片加载失败'),
+          ),
+        );
+      case MessageType.video:
+        return _linkBubble(
+          icon: Icons.videocam,
+          title: '视频消息',
+          url: message.content,
+        );
+      case MessageType.file:
+        return _linkBubble(
+          icon: Icons.insert_drive_file,
+          title: _fileNameFromUrl(message.content),
+          url: message.content,
+        );
+      case MessageType.emoji:
+        return Text(
+          message.content,
+          style: const TextStyle(fontSize: 34),
+        );
+      case MessageType.text:
+        return _textBubble(message.content);
+    }
+  }
+
+  Widget _textBubble(String content) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: isMe ? Colors.blue : Colors.grey[300],
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Text(
+        content,
+        style: TextStyle(
+          color: isMe ? Colors.white : Colors.black87,
+          fontSize: 15,
+        ),
+      ),
+    );
+  }
+
+  Widget _fallbackBubble(String text) {
+    return Container(
+      width: 180,
+      height: 80,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: Colors.grey[300],
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(text, style: const TextStyle(color: Colors.black54)),
+    );
+  }
+
+  Widget _linkBubble({required IconData icon, required String title, required String url}) {
+    return InkWell(
+      onTap: () async {
+        final uri = Uri.tryParse(url);
+        if (uri == null) return;
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: isMe ? Colors.blue : Colors.grey[300],
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: isMe ? Colors.white : Colors.black87),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                title,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: isMe ? Colors.white : Colors.black87,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _fileNameFromUrl(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null || uri.pathSegments.isEmpty) {
+      return '文件';
+    }
+    return uri.pathSegments.last;
   }
 
   String _statusText(MessageStatus status) {

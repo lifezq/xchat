@@ -70,13 +70,35 @@ func (s *ChatService) MarkAsRead(userID, friendID uint) error {
 	err := s.db.Model(&models.Message{}).
 		Where("sender_id = ? AND receiver_id = ? AND is_read = ?", friendID, userID, false).
 		Updates(map[string]interface{}{
-			"is_read":  true,
-			"status":   "read",
-			"read_at":  &now,
+			"is_read": true,
+			"status":  "read",
+			"read_at": &now,
 		}).Error
 
 	if err == nil {
-		s.clearUnreadCount(userID, friendID)
+		s.syncUnreadCount(userID, friendID)
+	}
+
+	return err
+}
+
+func (s *ChatService) MarkAsReadUpTo(userID, friendID, readUptoMessageID uint) error {
+	now := time.Now()
+	query := s.db.Model(&models.Message{}).
+		Where("sender_id = ? AND receiver_id = ? AND is_read = ?", friendID, userID, false)
+
+	if readUptoMessageID > 0 {
+		query = query.Where("id <= ?", readUptoMessageID)
+	}
+
+	err := query.Updates(map[string]interface{}{
+		"is_read": true,
+		"status":  "read",
+		"read_at": &now,
+	}).Error
+
+	if err == nil {
+		s.syncUnreadCount(userID, friendID)
 	}
 
 	return err
@@ -136,6 +158,24 @@ func (s *ChatService) clearUnreadCount(userID, fromUserID uint) {
 	ctx := context.Background()
 	key := fmt.Sprintf("unread:%d:%d", userID, fromUserID)
 	s.rdb.Del(ctx, key)
+}
+
+func (s *ChatService) syncUnreadCount(userID, fromUserID uint) {
+	var unreadCount int64
+	if err := s.db.Model(&models.Message{}).Where(
+		"sender_id = ? AND receiver_id = ? AND is_read = ?",
+		fromUserID, userID, false,
+	).Count(&unreadCount).Error; err != nil {
+		return
+	}
+
+	ctx := context.Background()
+	key := fmt.Sprintf("unread:%d:%d", userID, fromUserID)
+	if unreadCount <= 0 {
+		s.rdb.Del(ctx, key)
+		return
+	}
+	s.rdb.Set(ctx, key, unreadCount, 24*time.Hour)
 }
 
 func min(a, b uint) uint {

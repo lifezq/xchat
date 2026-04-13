@@ -31,6 +31,7 @@ class WebSocketService {
   bool _isConnecting = false;
 
   Function(Message)? onMessageReceived;
+  Function(Map<String, dynamic>)? onReadReceipt;
   Function(WsConnectionStatus)? onConnectionChanged;
 
   bool get isConnected => _channel != null;
@@ -81,9 +82,28 @@ class WebSocketService {
       _subscription = _channel!.stream.listen(
         (data) {
           final json = jsonDecode(data);
+          if (json is Map && json['event'] == 'read_receipt') {
+            if (onReadReceipt != null) {
+              final payload = json['data'];
+              if (payload is Map<String, dynamic>) {
+                onReadReceipt!(payload);
+              } else if (payload is Map) {
+                onReadReceipt!(payload.map((k, v) => MapEntry(k.toString(), v)));
+              }
+            }
+            return;
+          }
+
           if (onMessageReceived != null) {
-            final message = Message.fromJson(json);
-            onMessageReceived!(message);
+            final mapped = json is Map<String, dynamic>
+                ? json
+                : (json is Map
+                    ? json.map((k, v) => MapEntry(k.toString(), v))
+                    : <String, dynamic>{});
+            if (mapped.isNotEmpty) {
+              final message = Message.fromJson(mapped);
+              onMessageReceived!(message);
+            }
           }
         },
         onError: (error) {
